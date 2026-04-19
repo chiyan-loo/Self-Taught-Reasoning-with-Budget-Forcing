@@ -64,6 +64,12 @@ def parse_args():
         default=42, 
         help="Seed for shuffling the dataset"
     )
+    parser.add_argument(
+        "--system_prompt", 
+        type=str, 
+        default="Reason step by step, and put your final answer within \\boxed{}.",
+        help="System prompt to use during training"
+    )
     
     # LoRA Arguments
     parser.add_argument(
@@ -249,18 +255,20 @@ def main(args, training_args):
             assistant_msg = example[args.response_column]
 
             # Apply chat template if available, otherwise use a generic format
-            messages = [
+            messages = []
+            if args.system_prompt:
+                messages.append({"role": "system", "content": args.system_prompt})
+            
+            messages.extend([
                 {"role": "user", "content": user_msg},
                 {"role": "assistant", "content": assistant_msg}
-            ]
+            ])
             
             try:
                 if tokenizer.chat_template is not None:
                     example[args.text_column] = tokenizer.apply_chat_template(
                         messages, tokenize=False, add_generation_prompt=False
                     )
-                else:
-                    example[args.text_column] = f"User: {user_msg}\n\nAssistant: {assistant_msg}"
             except Exception:
                 # Fallback if chat template fails (e.g. missing system role requirement)
                 raise ValueError(
@@ -270,6 +278,10 @@ def main(args, training_args):
             return example
 
         dataset = dataset.map(format_example, desc="Formatting dataset")
+        
+        print("\n--- Example Processed Training Sample ---")
+        print(dataset[0][args.text_column])
+        print("------------------------------------------\n")
     
     # 6. Initialize SFTTrainer from trl
     print("Initializing SFTTrainer...")

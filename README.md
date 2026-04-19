@@ -45,7 +45,23 @@ python train/lora.py \
     --max_train_samples 600 \
     --per_device_train_batch_size 1 \
     --gradient_accumulation_steps 4 \
+    --system_prompt "Reason step by step, and put your final answer within \\boxed{}."
 ```
+
+### 3. Merge LoRA Weights
+
+Merge the LoRA adapter back into the base model for faster inference and evaluation.
+
+```bash
+python train/merge_lora.py \
+    --base_model_name_or_path "Qwen/Qwen2.5-3b-Instruct" \
+    --adapter_path "./output/Qwen2.5-3b-Instruct-MATH" \
+    --output_dir "./output/Qwen2.5-3b-Instruct-MATH-merged"
+```
+
+### 4. Evaluate
+
+Use the LM Evaluation Harness to evaluate the fine-tuned model on the MATH500 benchmark.
 
 ```bash
 lm-eval run \

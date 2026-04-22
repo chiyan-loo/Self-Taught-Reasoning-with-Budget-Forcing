@@ -5,15 +5,47 @@ Script to enhance reasoning traces via a multi-step LLM workflow.
 import argparse
 import json
 import os
+import random
+import re
 import sys
 import time
 from typing import Any, Optional
 
-from reasoning.enhance_traces_prompts import (
-    STEP1_ELABORATED_REASONING_SYSTEM,
-    STEP2_SELF_VERIFICATION_SYSTEM,
-    STEP3_EXPLORATORY_APPROACH_SYSTEM,
-)
+try:
+    from reasoning.enhance_traces_prompts import (
+        STEP1_ELABORATED_REASONING_SYSTEM,
+        STEP2_SELF_VERIFICATION_SYSTEM,
+        STEP3_EXPLORATORY_APPROACH_SYSTEM,
+    )
+except ImportError:
+    from enhance_traces_prompts import (
+        STEP1_ELABORATED_REASONING_SYSTEM,
+        STEP2_SELF_VERIFICATION_SYSTEM,
+        STEP3_EXPLORATORY_APPROACH_SYSTEM,
+    )
+
+def _extract_trace(text: str) -> str:
+    """Extract the reasoning trace from the XML tags. Returns the longest match."""
+    # First priority: explicit enhanced_trace tags
+    matches = re.findall(r"<enhanced_trace>(.*?)</enhanced_trace>", text, flags=re.DOTALL | re.IGNORECASE)
+    if matches:
+        longest_match = max(matches, key=len).strip()
+        if longest_match:
+            return longest_match
+    
+    # Second priority: strip <think> blocks and return the rest
+    # This is useful for reasoning models that might ignore our custom tags
+    # but follow the model-native thinking format.
+    clean_text = re.sub(r"<think>.*?</think>", "", text, flags=re.DOTALL | re.IGNORECASE).strip()
+    
+    if not clean_text or clean_text == "...":
+         # Fallback if the body is empty or just dots - maybe it put everything IN the think block?
+         # (Though usually we want to avoid this, it is better than nothing)
+         think_match = re.search(r"<think>(.*?)</think>", text, flags=re.DOTALL | re.IGNORECASE)
+         if think_match:
+             return think_match.group(1).strip()
+
+    return clean_text or text.strip()
 
 def _make_user_prompt(problem: str, trace: str) -> str:
     """Build the user prompt containing the original problem + trace."""
@@ -40,7 +72,10 @@ ENHANCEMENT_STEPS = [
 ]
 
 
-from reasoning.backends import APIBackend, VLLMBackend
+try:
+    from reasoning.backends import APIBackend, VLLMBackend
+except ImportError:
+    from backends import APIBackend, VLLMBackend
 
 
 
@@ -56,6 +91,7 @@ def load_input_data(
     problem_column: str,
     trace_column: str,
     max_samples: Optional[int],
+    shuffle_seed: Optional[int] = None,
 ) -> list[dict[str, Any]]:
     """Load the reasoning dataset from a JSONL file or HuggingFace dataset.
 
@@ -112,6 +148,11 @@ def load_input_data(
             )
             sys.exit(1)
 
+    if shuffle_seed is not None:
+        print(f"Shuffling dataset with seed {shuffle_seed}…")
+        random.seed(shuffle_seed)
+        random.shuffle(records)
+
     if max_samples is not None:
         records = records[:max_samples]
         print(f"Limiting to {len(records)} samples.")
@@ -145,84 +186,115 @@ def enhance_dataset(
     batch_size: int = 8,
     save_intermediates: bool = False,
     output_path: str = "",
+    debug_path: Optional[str] = None,
+    responses_log_path: Optional[str] = None,
 ) -> list[dict[str, Any]]:
     """Run the multi-step enhancement pipeline over all records.
 
     Each step rewrites the current reasoning trace to layer on a new
     reasoning habit.  The trace is updated in-place through the steps,
     and the final version is stored in the 'enhanced_reasoning_trace' key.
+    The raw (unextracted) model output is stored in 'raw_enhanced_reasoning_trace'.
     """
     total = len(records)
 
-    for step_idx, step in enumerate(steps):
-        step_name = step["name"]
-        system_prompt = step["system"]
-        print(f"\n{'='*70}")
-        print(
-            f"Step {step_idx + 1}/{len(steps)}: {step_name}  "
-            f"({total} samples)"
-        )
-        print(f"{'='*70}")
+    # Initialize responses log if requested
+    log_file = None
+    if responses_log_path:
+        log_dir = os.path.dirname(responses_log_path)
+        if log_dir:
+            os.makedirs(log_dir, exist_ok=True)
+        log_file = open(responses_log_path, "w", encoding="utf-8")
+        print(f"Logging raw LLM responses to: {responses_log_path}")
 
-        # Determine which trace to use as input for this step
-        trace_key = (
-            "reasoning_trace"
-            if step_idx == 0
-            else "enhanced_reasoning_trace"
-        )
-
-        # Process in batches
-        for batch_start in range(0, total, batch_size):
-            batch_end = min(batch_start + batch_size, total)
-            batch = records[batch_start:batch_end]
-
+    try:
+        for step_idx, step in enumerate(steps):
+            step_name = step["name"]
+            system_prompt = step["system"]
+            print(f"\n{'='*70}")
             print(
-                f"  Processing samples {batch_start + 1}–{batch_end} "
-                f"of {total}…"
+                f"Step {step_idx + 1}/{len(steps)}: {step_name}  "
+                f"({total} samples)"
+            )
+            print(f"{'='*70}")
+
+            # Determine which trace to use as input for this step
+            trace_key = (
+                "reasoning_trace"
+                if step_idx == 0
+                else "enhanced_reasoning_trace"
             )
 
-            user_prompts = [
-                _make_user_prompt(rec["problem"], rec[trace_key])
-                for rec in batch
-            ]
+            # Process in batches
+            for batch_start in range(0, total, batch_size):
+                batch_end = min(batch_start + batch_size, total)
+                batch = records[batch_start:batch_end]
 
-            try:
-                results = backend.generate_batch(system_prompt, user_prompts)
-            except Exception as e:
                 print(
-                    f"  ✗ Batch failed ({e}). Falling back to per-sample "
-                    f"generation…"
+                    f"  Processing samples {batch_start + 1}–{batch_end} "
+                    f"of {total}…"
                 )
-                results = []
-                for j, prompt in enumerate(user_prompts):
-                    try:
-                        result = backend.generate(system_prompt, prompt)
-                        results.append(result)
-                    except Exception as inner_e:
-                        print(
-                            f"    ✗ Sample {batch_start + j + 1} failed: "
-                            f"{inner_e}. Keeping original trace."
-                        )
-                        results.append(batch[j][trace_key])
 
-            # Store results
-            for j, result in enumerate(results):
-                idx = batch_start + j
-                records[idx]["enhanced_reasoning_trace"] = result
+                user_prompts = [
+                    _make_user_prompt(rec["problem"], rec[trace_key])
+                    for rec in batch
+                ]
 
-                # Optionally keep per-step snapshots for inspection
-                if save_intermediates:
-                    key = f"trace_after_step{step_idx + 1}_{step_name.lower().replace(' ', '_')}"
-                    records[idx][key] = result
+                try:
+                    results = backend.generate_batch(system_prompt, user_prompts)
+                except Exception as e:
+                    print(
+                        f"  ✗ Batch failed ({e}). Falling back to per-sample "
+                        f"generation…"
+                    )
+                    results = []
+                    for j, prompt in enumerate(user_prompts):
+                        try:
+                            result = backend.generate(system_prompt, prompt)
+                            results.append(result)
+                        except Exception as inner_e:
+                            print(
+                                f"    ✗ Sample {batch_start + j + 1} failed: "
+                                f"{inner_e}. Keeping original trace."
+                            )
+                            results.append(batch[j][trace_key])
 
-        # Checkpoint after each step
-        if save_intermediates and output_path:
-            checkpoint_path = output_path.replace(
-                ".jsonl",
-                f"_checkpoint_step{step_idx + 1}.jsonl",
-            )
-            save_output_data(records, checkpoint_path)
-            print(f"  ✓ Checkpoint saved: {checkpoint_path}")
+                # Store results
+                for j, result in enumerate(results):
+                    idx = batch_start + j
+                    user_prompt = user_prompts[j]
+                    
+                    # Log raw response if requested
+                    if log_file:
+                        log_entry = {
+                            "sample_idx": idx,
+                            "step": step_name,
+                            "system_prompt": system_prompt,
+                            "user_prompt": user_prompt,
+                            "raw_response": result
+                        }
+                        log_file.write(json.dumps(log_entry, ensure_ascii=False) + "\n")
+                        log_file.flush()
+
+                    extracted_result = _extract_trace(result)
+                    records[idx]["enhanced_reasoning_trace"] = extracted_result
+                    records[idx]["raw_enhanced_reasoning_trace"] = result
+
+                    # Optionally keep per-step snapshots for inspection
+                    if save_intermediates:
+                        base_key = step_name.lower().replace(' ', '_')
+                        records[idx][f"trace_after_step{step_idx + 1}_{base_key}"] = extracted_result
+                        records[idx][f"raw_trace_after_step{step_idx + 1}_{base_key}"] = result
+
+            # Save debug info after each step
+            if save_intermediates:
+                actual_debug_path = debug_path or (output_path.replace(".jsonl", "_debug.jsonl") if output_path else "debug_traces.jsonl")
+                save_output_data(records, actual_debug_path)
+                print(f"  ✓ Debug file updated: {actual_debug_path}")
+
+    finally:
+        if log_file:
+            log_file.close()
 
     return records
 
@@ -266,8 +338,20 @@ def parse_args():
     io_group.add_argument(
         "--output_file",
         type=str,
-        default="data/enhanced_traces.jsonl",
-        help="Where to save the enhanced traces.",
+        default="results/enhanced_traces.jsonl",
+        help="Where to save the final enhanced traces.",
+    )
+    io_group.add_argument(
+        "--debug_file",
+        type=str,
+        default="results/debug_traces.jsonl",
+        help="Where to save intermediate debug traces (defaults to output_file + '_debug.jsonl').",
+    )
+    io_group.add_argument(
+        "--responses_log",
+        type=str,
+        default=None,
+        help="Path to a file where all raw LLM prompts and responses will be logged.",
     )
     io_group.add_argument(
         "--problem_column",
@@ -278,7 +362,7 @@ def parse_args():
     io_group.add_argument(
         "--trace_column",
         type=str,
-        default="reasoning_trace",
+        default="solution",
         help="Column name containing the existing reasoning trace.",
     )
     io_group.add_argument(
@@ -287,6 +371,12 @@ def parse_args():
         default=None,
         help="Limit the number of samples to process.",
     )
+    io_group.add_argument(
+        "--shuffle_seed",
+        type=int,
+        default=42,
+        help="Seed for shuffling the dataset before processing. Set to None to disable shuffling.",
+    )
 
     # --- Backend ---
     backend_group = parser.add_argument_group("Backend")
@@ -294,7 +384,7 @@ def parse_args():
         "--backend",
         type=str,
         choices=["api", "vllm"],
-        default="api",
+        default="vllm",
         help="Inference backend: 'api' (OpenAI-compatible) or 'vllm' (local).",
     )
     backend_group.add_argument(
@@ -331,16 +421,16 @@ def parse_args():
     # --- vLLM-specific ---
     vllm_group = parser.add_argument_group("vLLM Backend Options")
     vllm_group.add_argument(
-        "--tensor_parallel_size",
-        type=int,
-        default=1,
-        help="Number of GPUs for tensor parallelism (vLLM).",
-    )
-    vllm_group.add_argument(
         "--gpu_memory_utilization",
         type=float,
         default=0.90,
         help="Fraction of GPU memory for vLLM's KV cache.",
+    )
+    vllm_group.add_argument(
+        "--max_model_len",
+        type=int,
+        default=32768,
+        help="Maximum model length (context size). Useful for large models on smaller GPUs.",
     )
 
     # --- Generation ---
@@ -366,7 +456,7 @@ def parse_args():
     gen_group.add_argument(
         "--batch_size",
         type=int,
-        default=8,
+        default=100,
         help="Number of samples to process per batch.",
     )
 
@@ -437,11 +527,11 @@ def main():
     else:
         backend = VLLMBackend(
             model=args.model,
-            tensor_parallel_size=args.tensor_parallel_size,
             max_tokens=args.max_tokens,
             temperature=args.temperature,
             top_p=args.top_p,
             gpu_memory_utilization=args.gpu_memory_utilization,
+            max_model_len=args.max_model_len,
         )
 
     # ---- Load data ----
@@ -452,6 +542,7 @@ def main():
         problem_column=args.problem_column,
         trace_column=args.trace_column,
         max_samples=args.max_samples,
+        shuffle_seed=args.shuffle_seed,
     )
 
     if not records:
@@ -474,6 +565,8 @@ def main():
         batch_size=args.batch_size,
         save_intermediates=args.save_intermediates,
         output_path=args.output_file,
+        debug_path=args.debug_file,
+        responses_log_path=args.responses_log,
     )
     elapsed = time.time() - t_start
     print(f"\n✓ Enhancement complete in {elapsed:.1f}s")
@@ -488,6 +581,8 @@ def main():
     print(f"  Samples processed : {len(records)}")
     print(f"  Steps applied     : {step_names}")
     print(f"  Output file       : {args.output_file}")
+    if args.responses_log:
+        print(f"  Responses log     : {args.responses_log}")
 
     # Show a brief comparison for the first sample
     if records:

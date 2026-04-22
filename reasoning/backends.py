@@ -87,6 +87,7 @@ class VLLMBackend:
         temperature: float = 0.7,
         top_p: float = 0.95,
         gpu_memory_utilization: float = 0.90,
+        max_model_len: Optional[int] = None,
     ):
         try:
             from vllm import LLM, SamplingParams
@@ -106,6 +107,7 @@ class VLLMBackend:
             tensor_parallel_size=tensor_parallel_size,
             trust_remote_code=True,
             gpu_memory_utilization=gpu_memory_utilization,
+            max_model_len=max_model_len,
         )
         self.tokenizer = AutoTokenizer.from_pretrained(
             model, trust_remote_code=True

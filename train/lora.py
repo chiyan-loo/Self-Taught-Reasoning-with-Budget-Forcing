@@ -93,7 +93,7 @@ def parse_args():
     parser.add_argument(
         "--max_seq_length", 
         type=int, 
-        default=16384, 
+        default=2048, 
         help="Maximum sequence length"
     )
 
@@ -102,13 +102,13 @@ def parse_args():
     parser.add_argument(
         "--learning_rate", 
         type=float, 
-        default=2e-4, 
+        default=1e-4, 
         help="Initial learning rate (AdamW optimizer)"
     )
     parser.add_argument(
-        "--num_train_epochs", 
+        "--epochs", 
         type=int, 
-        default=2, 
+        default=3, 
         help="Total number of training epochs to perform"
     )
     parser.add_argument(
@@ -134,7 +134,6 @@ def parse_args():
     parser.add_argument(
         "--load_in_4bit", 
         action="store_true", 
-        default=True,
         help="Load the model in 4-bit quantization (QLoRA)"
     )
     parser.add_argument(
@@ -164,7 +163,7 @@ def parse_args():
     
     # Override explicitly parsed training args
     training_args.learning_rate = args.learning_rate
-    training_args.num_train_epochs = args.num_train_epochs
+    training_args.num_train_epochs = args.epochs
     training_args.per_device_train_batch_size = args.per_device_train_batch_size
     training_args.gradient_accumulation_steps = args.gradient_accumulation_steps
     training_args.dataset_text_field = args.text_column
@@ -287,13 +286,6 @@ def main(args, training_args):
             return example
 
         dataset = dataset.map(format_example, desc="Formatting dataset")
-        
-        print("\n--- Example Processed Training Sample ---")
-        if len(dataset) > 0:
-            print(dataset[0][args.text_column])
-        else:
-            print("No samples available to print.")
-        print("------------------------------------------\n")
     
     # 6. Initialize SFTTrainer from trl
     print("Initializing SFTTrainer...")
@@ -306,6 +298,15 @@ def main(args, training_args):
     )
     
     # 7. Train and Save
+    print("\n" + "="*40)
+    print("🚀 TRAINING CONFIGURATION SUMMARY")
+    print(f"  Model:         {args.model_name_or_path}")
+    print(f"  Epochs:        {training_args.num_train_epochs}")
+    print(f"  Learning Rate: {training_args.learning_rate}")
+    print(f"  Batch Size:    {training_args.per_device_train_batch_size}")
+    print(f"  Accumulation:  {training_args.gradient_accumulation_steps}")
+    print("="*40 + "\n")
+
     print("Starting training...")
     trainer.train()
     

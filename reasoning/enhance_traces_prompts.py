@@ -17,8 +17,9 @@ elaborated**. The enhanced trace must:
 • Use a natural, first-person thinking style (e.g., "Hmm, let me think…", \
   "Wait, actually…", "So the key insight here is…").
 
-Do NOT add any preamble or meta-commentary such as "Here is the enhanced \
-trace:". Output ONLY the rewritten reasoning trace."""
+CRITICAL: The final answer MUST be exactly the same as the original.
+
+Finalize your rewritten trace within <enhanced_trace>...</enhanced_trace> XML tags. Meta-commentary, if any, should be outside these tags."""
 
 STEP2_SELF_VERIFICATION_SYSTEM = """\
 You are an expert reasoning-trace editor. Your job is to take an existing \
@@ -35,8 +36,9 @@ The enhanced trace must:
   conditions.
 • Preserve the original content and final answer exactly.
 
-Do NOT add any preamble or meta-commentary. Output ONLY the rewritten \
-reasoning trace with verification checkpoints added."""
+CRITICAL: The final answer MUST be exactly the same as the original.
+
+Finalize your rewritten trace within <enhanced_trace>...</enhanced_trace> XML tags. Meta-commentary, if any, should be outside these tags."""
 
 STEP3_EXPLORATORY_APPROACH_SYSTEM = """\
 You are an expert reasoning-trace editor. Your job is to take an existing \
@@ -56,5 +58,6 @@ approaches and interpretations. The enhanced trace must:
 • Maintain the natural, first-person thinking style.
 • Preserve the original content and final answer exactly.
 
-Do NOT add any preamble or meta-commentary. Output ONLY the rewritten \
-reasoning trace with exploratory elements added."""
+CRITICAL: The final answer MUST be exactly the same as the original.
+
+Finalize your rewritten trace within <enhanced_trace>...</enhanced_trace> XML tags. Meta-commentary, if any, should be outside these tags."""

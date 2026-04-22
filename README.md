@@ -50,27 +50,7 @@ pip install -r requirements.txt
 
 ## Usage
 
-### 1. Enhance Reasoning Traces
 
-```bash
-# Using an OpenAI-compatible API
-python reasoning/enhance_traces.py \
-    --backend api \
-    --api_base "https://api.openai.com/v1" \
-    --api_key "$OPENAI_API_KEY" \
-    --model "gpt-4o" \
-    --input_file data/reasoning_traces.jsonl \
-    --output_file data/enhanced_traces.jsonl
-
-# Using a local vLLM instance
-python reasoning/enhance_traces.py \
-    --backend vllm \
-    --model "cyankiwi/Qwen3.5-9B-AWQ-4bit" \
-    --dataset_name "nlile/hendrycks-MATH-benchmark" \
-    --dataset_split "train" \
-    --output_file reasoning/results/enhanced_traces.jsonl \
-    --max_samples 800
-```
 
 ### 2. Fine-Tune with LoRA
 
@@ -82,7 +62,7 @@ python train/lora.py \
     --dataset_name_or_path "nlile/hendrycks-MATH-benchmark" \
     --dataset_split "train" \
     --response_column "solution" \
-    --output_dir "./output/Qwen2.5-3b-MATH-2" \
+    --output_dir "./output/Qwen2.5-3B-MATH-2" \
     --max_train_samples 800 \
     --per_device_train_batch_size 1 \
     --gradient_accumulation_steps 16 \
@@ -96,9 +76,9 @@ Merge the LoRA adapter back into the base model for faster inference and evaluat
 
 ```bash
 python train/merge_lora.py \
-    --base_model_name_or_path "Qwen/Qwen2.5-3b" \
-    --adapter_path "./output/Qwen2.5-3b-MATH-2" \
-    --output_dir "./output/Qwen2.5-3b-MATH-2-merged"
+    --base_model_name_or_path "Qwen/Qwen2.5-3B" \
+    --adapter_path "./output/Qwen2.5-3B-MATH-2" \
+    --output_dir "./output/Qwen2.5-3B-MATH-2-merged"
 ```
 
 ### 4. Evaluate
@@ -108,7 +88,7 @@ Use the LM Evaluation Harness to evaluate the fine-tuned model on the MATH500 be
 ```bash
 lm-eval run \
     --model vllm \
-    --model_args pretrained=./output/Qwen2.5-3b-MATH-2-merged \
+    --model_args pretrained=./output/Qwen2.5-3B-MATH-2-merged \
     --tasks minerva_math500 \
     --batch_size auto \
     --apply_chat_template \

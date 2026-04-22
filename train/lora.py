@@ -93,7 +93,7 @@ def parse_args():
     parser.add_argument(
         "--max_seq_length", 
         type=int, 
-        default=2048, 
+        default=4096, 
         help="Maximum sequence length"
     )
 
@@ -236,7 +236,10 @@ def main(args, training_args):
     
     # 4. Load Dataset
     print(f"Loading dataset from {args.dataset_name_or_path}...")
-    dataset = load_dataset(args.dataset_name_or_path, split=args.dataset_split)
+    if args.dataset_name_or_path.endswith(".json") or args.dataset_name_or_path.endswith(".jsonl"):
+        dataset = load_dataset("json", data_files=args.dataset_name_or_path, split=args.dataset_split)
+    else:
+        dataset = load_dataset(args.dataset_name_or_path, split=args.dataset_split)
 
 
     print(f"Shuffling dataset with seed {args.shuffle_seed}...")
@@ -261,6 +264,12 @@ def main(args, training_args):
             
             user_msg = f"Problem:\n{example[args.prompt_column]}\n\nSolution:"
             assistant_msg = example[args.response_column]
+
+            # If the assistant_msg looks like a full chat (contains assistant tag), extract only the assistant part
+            if "<|im_start|>assistant" in assistant_msg:
+                parts = assistant_msg.split("<|im_start|>assistant\n")
+                if len(parts) > 1:
+                    assistant_msg = parts[-1].split("<|im_end|>")[0].strip()
 
             # Apply chat template if available, otherwise use a generic format
             messages = []

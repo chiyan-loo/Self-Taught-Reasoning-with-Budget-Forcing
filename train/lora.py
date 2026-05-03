@@ -1,7 +1,7 @@
 import argparse
 import torch
 from datasets import load_dataset
-from peft import LoraConfig
+from peft import LoraConfig, PeftModel
 from transformers import (
     AutoModelForCausalLM,
     AutoTokenizer,
@@ -153,6 +153,13 @@ def parse_args():
         default="paged_adamw_32bit", 
         help="The optimizer to use"
     )
+    parser.add_argument(
+        "--attn_implementation",
+        type=str,
+        default="sdpa",
+        choices=["visual_attention", "flash_attention_2", "sdpa", "eager"],
+        help="Attention implementation to use"
+    )
     
     # Parse known arguments first (our custom ones)
     args, unknown = parser.parse_known_args()
@@ -216,7 +223,8 @@ def main(args, training_args):
         quantization_config=bnb_config,
         torch_dtype=torch.bfloat16,
         device_map="auto",
-        trust_remote_code=True
+        trust_remote_code=True,
+        attn_implementation=args.attn_implementation
     )
     
     if args.gradient_checkpointing:
@@ -248,6 +256,10 @@ def main(args, training_args):
     if args.max_train_samples is not None:
         dataset = dataset.select(range(min(len(dataset), args.max_train_samples)))
         print(f"Subsetted dataset to {len(dataset)} samples.")
+    else:
+        # Explicitly select all to ensure consistent dataset object type
+        dataset = dataset.select(range(len(dataset)))
+        print(f"Using full dataset ({len(dataset)} samples).")
     
     # 5. Handle missing text column with automatic formatting
     if args.text_column not in dataset.column_names:
@@ -319,8 +331,32 @@ def main(args, training_args):
     print("Starting training...")
     trainer.train()
     
-    print(f"Saving final model adapter to {training_args.output_dir}...")
-    trainer.save_model(training_args.output_dir)
+    # 7. Save adapter and merge
+    lora_output_dir = training_args.output_dir.rstrip("/") + "-LoRA"
+    print(f"Saving final model adapter to {lora_output_dir}...")
+    trainer.save_model(lora_output_dir)
+    tokenizer.save_pretrained(lora_output_dir)
+    
+    print("Merging LoRA adapter into base model...")
+    # Free up memory from training
+    del trainer
+    del model
+    if torch.cuda.is_available():
+        torch.cuda.empty_cache()
+    
+    # Reload base model for merging (must be unquantized)
+    base_model = AutoModelForCausalLM.from_pretrained(
+        args.model_name_or_path,
+        torch_dtype=torch.bfloat16 if torch.cuda.is_available() and torch.cuda.is_bf16_supported() else torch.float16,
+        device_map="auto",
+        trust_remote_code=True
+    )
+    
+    merged_model = PeftModel.from_pretrained(base_model, lora_output_dir)
+    merged_model = merged_model.merge_and_unload()
+    
+    print(f"Saving merged model to {training_args.output_dir}...")
+    merged_model.save_pretrained(training_args.output_dir)
     tokenizer.save_pretrained(training_args.output_dir)
     print("Done!")
 

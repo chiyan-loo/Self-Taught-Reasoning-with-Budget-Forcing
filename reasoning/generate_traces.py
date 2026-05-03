@@ -10,7 +10,7 @@ from tqdm import tqdm
 from vllm import LLM, SamplingParams
 from transformers import AutoTokenizer
 from datasets import load_dataset
-from math_verify import parse, verify
+from utils import get_answer, is_equiv, process_docs, process_results
 
 
 def main():
@@ -70,6 +70,11 @@ def main():
     if args.num_samples > 0:
         ds = ds.select(range(min(args.num_samples, len(ds))))
 
+    # Process dataset for robust normalization if possible
+    if "problem" in ds.column_names and "solution" in ds.column_names:
+        print("Normalizing dataset answers...")
+        ds = process_docs(ds)
+
     random.seed(args.seed)
     np.random.seed(args.seed)
 
@@ -113,9 +118,10 @@ def main():
             prompts[idx] += gen_text
             steps_taken[idx] = step
             
-            # Check correctness
-            ground_truth = str(ds[idx][args.answer_key]).strip()
-            is_correct = verify(parse(ground_truth), parse(prompts[idx]))
+            # Check correctness using both exact match and math_verify
+            # process_results returns a dict with 'exact_match' and 'math_verify'
+            eval_results = process_results(ds[idx], [prompts[idx]])
+            is_correct = eval_results["exact_match"] == 1 or eval_results["math_verify"] == 1
             is_correct_list[idx] = is_correct
 
             # Decide whether to stop

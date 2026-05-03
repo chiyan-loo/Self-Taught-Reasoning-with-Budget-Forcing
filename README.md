@@ -1,5 +1,5 @@
 <div align="center">
-  <h1>High Quality Self-Taught Reasoning via Simple Budget Forcing (In Progress)</h1>
+  <h1>Self-Taught Reasoning with Simple Budget Forcing (In Progress)</h1>
   </p>
 </div>
 
@@ -11,14 +11,27 @@
 
 **Results**: Preliminary results show that fine tuning Qwen 2.5 3B Instruct with QLoRA on less than 250 self-generated MATH reasoning traces (3 budget forcing steps) yields a 3.8% accuracy gain on MATH-500 while typical self-taught reasoning only increases accuracy by 0.8% with the same amount of samples. (both evaluated with 1 training iteration)
 
+| Method | MATH-500 Accuracy | Δ vs Baseline |
+|---|---|---|
+| Qwen 2.5 3B Instruct (baseline) | 64.4% | — |
+| + Self-generated reasoning traces | 65.2% | +0.8% |
+| + Budget forcing (3 waits) | 65.8% | +1.4% |
+| + Self-generated reasoning traces with Budget forcing (3 "wait") | **65.2%** | **+0.8%** |
+| + Self-generated reasoning traces with Budget forcing (3 alternating "wait", "alternatively") | **68.2%** | **+3.8%** |
+
+| Method | MATH-500 Accuracy | Δ vs Baseline |
+|---|---|---|
+| Qwen 2.5 3B Instruct (baseline) | 64.4% | — |
+| + Self-generated reasoning traces | 65.2% | +0.8% |
+| + Budget forcing (3 waits) | 65.8% | +1.4% |
+| + Self-generated reasoning traces with Budget forcing (3 "wait") | 65.2% | +0.8% |
+| + Self-generated reasoning traces with Budget forcing (3 alternating "wait", "alternatively") | **65.6%** | **+1.2%** |
+| + Self-generated reasoning traces with Budget forcing (5 alternating "wait", "alternatively") | **67.0%** | **+2.6%** |
+
+
 ## Current Issues
-
-### Repetition
-- During reasoning generation, Qwen 2.5 3B Instruct generates highly repetitive responses despite using 0.7 temperature.
-- During evaluation, fine-tuned models tend to output highly repetitive responses.
-
-### Hardware Constraints
-- Scaling to Larger Models could help with repetition loops, but I don't have access to the necessary hardware.
+- Models tend to generate repetitive responses during reasoning trace generation and evaluation.
+- I would like to scale to larger models, longer reasoning traces, and full fine-tuning, but I don't have access to the necessary hardware. 😭
 
 ## Structure
 
@@ -81,17 +94,6 @@ python train/lora.py \
     --epochs 10
 ```
 
-### Merging Weights
-
-Merge the LoRA adapter back into the base model:
-
-```bash
-python train/merge_lora.py \
-    --base_model_name_or_path "Qwen/Qwen2.5-3B-Instruct" \
-    --adapter_path "./output/qwen2.5-3b-reasoning" \
-    --output_dir "./output/qwen2.5-3b-reasoning-merged"
-```
-
 ## Evaluation
 
 Evaluate the model using `lm-evaluation-harness` with `vLLM` backend:
@@ -99,7 +101,7 @@ Evaluate the model using `lm-evaluation-harness` with `vLLM` backend:
 ```bash
 lm-eval run \
     --model vllm \
-    --model_args pretrained=./output/qwen2.5-3b-reasoning-merged \
+    --model_args pretrained=./output/qwen2.5-3b-reasoning \
     --tasks minerva_math500 \
     --batch_size auto \
     --apply_chat_template \
